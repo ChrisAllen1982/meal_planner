@@ -24,6 +24,11 @@ VERSION = "1.0.0"
 _LOGGER = logging.getLogger(__name__)
 
 CONF_DEVICE_ID = 'device_id'
+CONF_MEALS = 'meals'
+CONF_START_TIME = 'start_time'
+CONF_END_TIME = 'end_time'
+CONF_FILTER = 'filter'
+CONF_RESET_DAY = 'reset_day'
 JSON_CACHE = 'meal_plan.json'
 
 
@@ -36,7 +41,17 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     {
         # pylint: disable=no-value-for-parameter
         vol.Required(CONF_PATH): cv.string,
-        vol.Required(CONF_NAME): cv.string
+        vol.Required(CONF_NAME): cv.string,
+        vol.Required(CONF_RESET_DAY): cv.string,
+        vol.Optional(CONF_MEALS, default=[]):
+        vol.All(cv.ensure_list, vol.Schema([
+            vol.Schema({
+                vol.Optional(CONF_FILTER, None): cv.string,
+                vol.Required(CONF_NAME): cv.string,
+				vol.Required(CONF_START_TIME): cv.string,
+				vol.Optional(CONF_END_TIME, None): cv.string
+            })
+        ]))
     }
 )
 
