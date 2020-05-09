@@ -1,8 +1,11 @@
 """Support for Meal_Planner Calendar."""
 import copy
 import logging
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta, time
+
 import arrow
+
+import uuid
 
 import voluptuous as vol
 from homeassistant.components.calendar import (ENTITY_ID_FORMAT,
@@ -48,8 +51,8 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
             vol.Schema({
                 vol.Optional(CONF_FILTER, None): cv.string,
                 vol.Required(CONF_NAME): cv.string,
-				vol.Required(CONF_START_TIME): cv.string,
-				vol.Optional(CONF_END_TIME, None): cv.string
+                vol.Required(CONF_START_TIME): cv.string,
+                vol.Optional(CONF_END_TIME, None): cv.string
             })
         ]))
     }
@@ -64,9 +67,23 @@ def setup_platform(hass, config, add_entities, _=None):
     _LOGGER.debug("Setting up meal_planner calendars")
     calendar_devices = []
 
+    meals = {}
+
+    for meal in config.get(CONF_MEALS):
+        meal_name = meal.get(CONF_NAME)
+
+        item = {
+            CONF_START_TIME : meal.get(CONF_START_TIME),
+            CONF_END_TIME : meal.get(CONF_END_TIME) or meal.get(CONF_START_TIME),
+            CONF_FILTER : meal.get(CONF_FILTER)
+        }
+
+        meals[meal_name] = item
+
     device_data = {
         CONF_NAME: config.get(CONF_NAME),
-        CONF_PATH: config.get(CONF_PATH)
+        CONF_PATH: config.get(CONF_PATH),
+        CONF_MEALS: meals
     }
     device_id = "{}".format(device_data[CONF_NAME])
     entity_id = generate_entity_id(ENTITY_ID_FORMAT, device_id, hass=hass)
@@ -74,9 +91,6 @@ def setup_platform(hass, config, add_entities, _=None):
         MealPlannerEventDevice(entity_id, device_data))
 
     add_entities(calendar_devices)
-
-
-
 
 
 class Recipe:
@@ -200,7 +214,7 @@ class MCBParser:
             recipeItem = McbRecipe(recipe)
             self.recipeDictionary[recipeItem.title] = recipeItem
 
-    def recipies(self):
+    def recipies(self, filter=None):
         return list(self.recipeDictionary.keys())
 
     def recipeDetails(self, name):
@@ -218,6 +232,8 @@ class MealPlannerEventDevice(CalendarEventDevice):
         self._event = None
         self._name = device_data[CONF_NAME]
         self._data = MCBParser(device_data[CONF_PATH])
+
+        self._meals = device_data[CONF_MEALS]
 
         #if self.planned_meals is None:
         self.planned_meals = {}
@@ -237,35 +253,36 @@ class MealPlannerEventDevice(CalendarEventDevice):
         today = date.today()
         events = []
 
-        if today.isoformat() not in self.planned_meals:
-            self.planned_meals.clear()
-            start_date = today
-            end = start_date + timedelta(days=7)
-
-            tmp = start_date
-
-            while tmp < end:
-                self.planned_meals[tmp.isoformat()] = random.choice(self._data.recipies())
-                tmp = tmp + timedelta(days=1)  # replace the interval at will
+        
 
       #  with open('tmp.md', 'w') as mdfile:
       #      mdfile.write(recipeList.recipeDetails(self.planned_meals[today.isoformat()]).__str__())
 
-        for item_date, meal in self.planned_meals.items():
-            details = self._data.recipeDetails(meal)
+        for item_date, meals in self.planned_meals.items():
 
-            data = {
-                'uid': None,
-                'title': meal,
-                'start': self.get_date_formatted(datetime.combine(date.fromisoformat(item_date), time(hour=18)), False),
-                'end':   self.get_date_formatted(datetime.combine(date.fromisoformat(item_date), time(hour=20)), False),
-                'location': '',
-                'description': details.__str__()
-            }
-            
-            # Note that we return a formatted date for start and end here,
-            # but a different format for self.event!
-            events.append(data)
+            for meal, selection in meals.items():
+
+                _LOGGER
+
+                meal_details = self._meals[meal]
+
+                details = self._data.recipeDetails(selection)
+
+                start = time.fromisoformat(meal_details[CONF_START_TIME])
+                end = time.fromisoformat(meal_details[CONF_END_TIME])
+
+                data = {
+                    'uid': uuid.uuid4().hex,
+                    'title': selection,
+                    'start': self.get_date_formatted(datetime.combine(date.fromisoformat(item_date), start), False),
+                    'end':   self.get_date_formatted(datetime.combine(date.fromisoformat(item_date), end), False),
+                    'location': '',
+                    'description': details.__str__()
+                }
+                
+                # Note that we return a formatted date for start and end here,
+                # but a different format for self.event!
+                events.append(data)
 
         return events
 
@@ -274,19 +291,48 @@ class MealPlannerEventDevice(CalendarEventDevice):
 
         isotoday = date.today().isoformat()
 
+        if isotoday not in self.planned_meals:
+            self.planned_meals.clear()
+            start_date = date.today()
+
+            end = start_date + timedelta(days=7)
+
+            tmp = start_date
+
+            while tmp < end:
+                meals = {}
+
+                for meal_name, meal in self._meals.items():               
+
+                    _LOGGER.debug('Planning %s on %s', meal_name, tmp)
+
+                    meals[meal_name] = random.choice(self._data.recipies(meal[CONF_FILTER]))
+                    tmp = tmp + timedelta(days=1)  # replace the interval at will
+
+                self.planned_meals[tmp.isoformat()] = meals
+
+
         if isotoday in self.planned_meals:
-            meal = self.planned_meals[isotoday]
-            details = self._data.recipeDetails(meal)
 
-            data = {
-                'summary': meal,
-                'start': self.get_hass_date(datetime.combine(date.fromisoformat(isotoday), time(hour=18)), False),
-                'end': self.get_hass_date(datetime.combine(date.fromisoformat(isotoday), time(hour=20)), False),
-                'location': '',
-                'description': details.__str__()
-            }
+            for meal, selection in self.planned_meals[isotoday].items():
+                
+                details = self._data.recipeDetails(selection)
 
-            self._event = data
+                meal_details = self._meals[meal]
+
+                start = time.fromisoformat(meal_details[CONF_START_TIME])
+                end = time.fromisoformat(meal_details[CONF_END_TIME])
+
+                data = {
+                    'summary': selection,
+                    'start': self.get_hass_date(datetime.combine(date.fromisoformat(isotoday), start), False),
+                    'end': self.get_hass_date(datetime.combine(date.fromisoformat(isotoday), end), False),
+                    'location': '',
+                    'description': details.__str__()
+                }
+
+                _LOGGER.debug('Setting current event: %s', selection)
+                self._event = data
             
 
         return True
