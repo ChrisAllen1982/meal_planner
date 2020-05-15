@@ -1,6 +1,9 @@
 """Support for Meal_Planner Calendar."""
 import copy
 import logging
+import calendar
+import pypandoc
+
 from datetime import date, datetime, timedelta, time
 
 import arrow
@@ -83,6 +86,7 @@ def setup_platform(hass, config, add_entities, _=None):
     device_data = {
         CONF_NAME: config.get(CONF_NAME),
         CONF_PATH: config.get(CONF_PATH),
+        CONF_RESET_DAY: config.get(CONF_RESET_DAY),
         CONF_MEALS: meals
     }
     device_id = "{}".format(device_data[CONF_NAME])
@@ -232,6 +236,7 @@ class MealPlannerEventDevice(CalendarEventDevice):
         self._event = None
         self._name = device_data[CONF_NAME]
         self._data = MCBParser(device_data[CONF_PATH])
+        self._reset_day = device_data[CONF_RESET_DAY]
 
         self._meals = device_data[CONF_MEALS]
 
@@ -284,7 +289,37 @@ class MealPlannerEventDevice(CalendarEventDevice):
                 # but a different format for self.event!
                 events.append(data)
 
+
         return events
+
+    def plan_meals(self):
+        
+        meal_collecction = {}
+
+        start_date = date.today()
+        end = start_date + timedelta(days=7)
+        tmp = start_date
+
+        while tmp < end:
+
+            meals = {}
+
+            for meal_name, meal in self._meals.items():               
+
+                _LOGGER.debug('Planning %s on %s', meal_name, tmp)
+
+                meals[meal_name] = random.choice(self._data.recipies(meal[CONF_FILTER]))
+
+            meal_collecction[tmp.isoformat()] = meals
+
+            tmp = tmp + timedelta(days=1)  # replace the interval at will
+
+            if calendar.day_name[tmp.weekday()] == self._reset_day:
+                break
+
+
+        return meal_collecction
+
 
     def update(self):
         """Update event data."""
@@ -292,48 +327,41 @@ class MealPlannerEventDevice(CalendarEventDevice):
         isotoday = date.today().isoformat()
 
         if isotoday not in self.planned_meals:
+            _LOGGER.info('Planning meals from %s', isotoday)
             self.planned_meals.clear()
-            start_date = date.today()
+            self.planned_meals = self.plan_meals()
+            _LOGGER.debug(self.planned_meals)
 
-            end = start_date + timedelta(days=7)
+        data = None
+        
+        for isodate, meals in self.planned_meals.items():
 
-            tmp = start_date
-
-            while tmp < end:
-                meals = {}
-
-                for meal_name, meal in self._meals.items():               
-
-                    _LOGGER.debug('Planning %s on %s', meal_name, tmp)
-
-                    meals[meal_name] = random.choice(self._data.recipies(meal[CONF_FILTER]))
-                    tmp = tmp + timedelta(days=1)  # replace the interval at will
-
-                self.planned_meals[tmp.isoformat()] = meals
-
-
-        if isotoday in self.planned_meals:
-
-            for meal, selection in self.planned_meals[isotoday].items():
+            for meal, selection in self.planned_meals[isodate].items():
                 
-                details = self._data.recipeDetails(selection)
-
                 meal_details = self._meals[meal]
 
-                start = time.fromisoformat(meal_details[CONF_START_TIME])
-                end = time.fromisoformat(meal_details[CONF_END_TIME])
+                start = datetime.combine(date.fromisoformat(isodate), time.fromisoformat(meal_details[CONF_START_TIME]))
+                end   = datetime.combine(date.fromisoformat(isodate), time.fromisoformat(meal_details[CONF_END_TIME]))
 
-                data = {
-                    'summary': selection,
-                    'start': self.get_hass_date(datetime.combine(date.fromisoformat(isotoday), start), False),
-                    'end': self.get_hass_date(datetime.combine(date.fromisoformat(isotoday), end), False),
-                    'location': '',
-                    'description': details.__str__()
-                }
+                details = self._data.recipeDetails(selection)
 
-                _LOGGER.debug('Setting current event: %s', selection)
-                self._event = data
-            
+                if start > datetime.now() and data is None:
+
+                    data = {
+                        'summary': selection,
+                        'start': self.get_hass_date(start, False),
+                        'end': self.get_hass_date(end, False),
+                        'location': '',
+                        'description': details.__str__()
+                    }
+
+                    _LOGGER.debug('Setting current event: %s', selection)
+                    self._event = data
+
+                    output = pypandoc.convert_text(data['description'], 'html', format='md', outputfile="/home/homeassistant/.homeassistant/www/index.html", extra_args=['-s', '-c style.css'])
+
+                    break
+                
 
         return True
     
@@ -359,5 +387,12 @@ class MealPlannerEventDevice(CalendarEventDevice):
         if is_all_day:
             return {'date': MealPlannerEventDevice.get_date_formatted(arw, is_all_day)}
         return {'dateTime': MealPlannerEventDevice.get_date_formatted(arw, is_all_day)}
+
+
+
+
+
+
+
 
 
