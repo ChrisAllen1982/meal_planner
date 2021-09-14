@@ -4,6 +4,7 @@
     "documentation": "https://github.com/ChrisAllen1982/meal_planner/blob/master/README.md",
     "requirements": ["arrow"],
     "dependencies": [],
+    "version": "0.0.1",
     "homeassistant": "0.109.4",
     "codeowners": ["@ChrisAllen1982"]
 
